@@ -1,0 +1,1 @@
+CreateObject("Wscript.Shell").Run "pythonw furry_tools.py", 0, False
