@@ -786,7 +786,7 @@ class FurryTools(QWidget):
                     start=start_time,
                     buttons=[
                         {"label": "Rejoindre Discord", "url": "https://discord.gg/g7eqjzykrw"},
-                        {"label": "GitHub", "url": "https://github.com/RvMillions"}
+                        {"label": "Site Web", "url": "https://twitchfamily.onrender.com"}
                     ]
                 )
                 for _ in range(15):
@@ -1055,7 +1055,19 @@ class FurryTools(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur lors du drop : {e}")
 
+def single_instance_check():
+    mutex_name = "FurryTools_Instance_Mutex"
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+    last_error = ctypes.windll.kernel32.GetLastError()
+    if last_error == 183:
+        ctypes.windll.kernel32.CloseHandle(mutex)
+        return False
+    return True
+
 def main():
+    if not single_instance_check():
+        QMessageBox.critical(None, "Erreur", "Furry Tools est déjà en cours d'exécution.")
+        return
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     window = FurryTools()
