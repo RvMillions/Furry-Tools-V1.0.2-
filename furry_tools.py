@@ -873,7 +873,7 @@ class FurryTools(QWidget):
                     start=start_time,
                     buttons=[
                         {"label": "Discord", "url": "https://discord.gg/g7eqjzykrw"},
-                        {"label": "GitHub", "url": "https://github.com/RvMillions"}
+                        {"label": "GitHub", "url": "https://github.com/RvMillions/Furry-Tools"}
                     ]
                 )
                 for _ in range(15):
