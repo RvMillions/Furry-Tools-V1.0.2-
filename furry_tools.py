@@ -18,9 +18,13 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QMenu,
                              QHBoxLayout, QSlider, QSpinBox, QListWidget,
                              QCheckBox, QLineEdit, QPushButton, QGroupBox,
                              QListWidgetItem, QInputDialog, QFileDialog,
-                             QProgressDialog, QProgressBar)
-from PyQt5.QtCore import Qt, QPoint, QUrl, QThread, pyqtSignal, QSize, QTimer
-from PyQt5.QtGui import QPixmap, QCursor, QDesktopServices, QFont, QIcon, QMovie, QClipboard
+                             QProgressDialog, QProgressBar, QDesktopWidget,
+                             QScrollArea, QGridLayout, QFrame, QWidgetAction,
+                             QComboBox, QSizePolicy, QToolTip, QTabWidget)
+from PyQt5.QtCore import Qt, QPoint, QUrl, QThread, pyqtSignal, QSize, QTimer, QRect
+from PyQt5.QtGui import (QPixmap, QCursor, QDesktopServices, QFont, 
+                         QFontDatabase, QIcon, QMovie, QClipboard, QFontMetrics,
+                         QColor, QPalette)
 
 try:
     from pypresence import Presence
@@ -52,6 +56,54 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 CACHE_FILE = os.path.join(CONFIG_DIR, 'cache.json')
 DISCORD_CLIENT_ID = "1482031246463996127"
 
+# Thèmes prédéfinis
+THEMES = {
+    "Gris foncé": {
+        'bg_primary': '#2b2b2b',
+        'bg_secondary': '#3c3c3c',
+        'bg_tertiary': '#4a4a4a',
+        'text_primary': '#f0f0f0',
+        'text_secondary': '#cccccc',
+        'border': '#555555',
+        'border_focus': '#6c6c6c',
+        'accent': '#5c5c5c',
+        'accent_hover': '#6c6c6c'
+    },
+    "Sombre": {
+        'bg_primary': '#1e1e1e',
+        'bg_secondary': '#2d2d2d',
+        'bg_tertiary': '#3d3d3d',
+        'text_primary': '#ffffff',
+        'text_secondary': '#e0e0e0',
+        'border': '#404040',
+        'border_focus': '#606060',
+        'accent': '#4a4a4a',
+        'accent_hover': '#5a5a5a'
+    },
+    "Bleu nuit": {
+        'bg_primary': '#1a2634',
+        'bg_secondary': '#2a3a4c',
+        'bg_tertiary': '#3a4e64',
+        'text_primary': '#ecf0f1',
+        'text_secondary': '#bdc3c7',
+        'border': '#34495e',
+        'border_focus': '#5d6d7e',
+        'accent': '#4a6b8a',
+        'accent_hover': '#5a7b9a'
+    },
+    "Noir": {
+        'bg_primary': '#000000',
+        'bg_secondary': '#1a1a1a',
+        'bg_tertiary': '#2a2a2a',
+        'text_primary': '#f0f0f0',
+        'text_secondary': '#cccccc',
+        'border': '#333333',
+        'border_focus': '#555555',
+        'accent': '#4a4a4a',
+        'accent_hover': '#5a5a5a'
+    }
+}
+
 os.makedirs(CONFIG_DIR, exist_ok=True)
 
 def load_config():
@@ -59,7 +111,19 @@ def load_config():
         'icon_size': 150,
         'private_games': [],
         'logo_path': '',
-        'enable_discord_rpc': False
+        'enable_discord_rpc': False,
+        'font_size': 10,
+        'font_family': 'Segoe UI',
+        'grid_columns': 2,
+        'grid_width': 400,
+        'grid_max_height': 500,
+        'button_min_width': 180,
+        'button_max_width': 250,
+        'button_height': 40,
+        'name_max_length': 40,
+        'dialog_width': 600,
+        'dialog_height': 500,
+        'theme': 'Gris foncé'
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -102,6 +166,216 @@ def save_cache(cache):
             json.dump(cache, f, indent=4)
     except Exception as e:
         pass
+
+def get_scaled_font(base_size=10, base_family='Segoe UI'):
+    screen = QApplication.primaryScreen()
+    if not screen:
+        return QFont(base_family, base_size)
+    
+    dpi = screen.logicalDotsPerInch()
+    scale_factor = dpi / 96.0
+    
+    if scale_factor < 1.0:
+        scale_factor = 1.0
+    
+    scaled_size = max(8, int(base_size * scale_factor))
+    return QFont(base_family, scaled_size)
+
+def get_scaled_size(base_width, base_height, config=None):
+    screen = QApplication.primaryScreen()
+    if not screen:
+        return base_width, base_height
+    
+    rect = screen.availableGeometry()
+    screen_width = rect.width()
+    screen_height = rect.height()
+    
+    if config and 'dialog_width' in config:
+        base_width = config['dialog_width']
+        base_height = config['dialog_height']
+    
+    return base_width, base_height
+
+def center_window(window):
+    frame = window.frameGeometry()
+    screen = QApplication.primaryScreen().availableGeometry().center()
+    frame.moveCenter(screen)
+    window.move(frame.topLeft())
+
+def adjust_widget_font(widget, base_size, base_family):
+    font = get_scaled_font(base_size, base_family)
+    widget.setFont(font)
+
+def get_theme_stylesheet(theme_name):
+    theme = THEMES.get(theme_name, THEMES["Gris foncé"])
+    return f"""
+        QDialog, QMainWindow, QWidget {{
+            background-color: {theme['bg_primary']};
+            color: {theme['text_primary']};
+        }}
+        QGroupBox {{
+            color: {theme['text_primary']};
+            border: 2px solid {theme['border']};
+            border-radius: 6px;
+            margin-top: 8px;
+            font-weight: bold;
+            padding-top: 8px;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 8px 0 8px;
+        }}
+        QListWidget, QTextEdit, QPlainTextEdit {{
+            background-color: {theme['bg_secondary']};
+            color: {theme['text_primary']};
+            border: 1px solid {theme['border']};
+            border-radius: 4px;
+            padding: 4px;
+        }}
+        QPushButton {{
+            background-color: {theme['bg_secondary']};
+            color: {theme['text_primary']};
+            border: 1px solid {theme['border']};
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-weight: normal;
+        }}
+        QPushButton:hover {{
+            background-color: {theme['accent_hover']};
+            border: 1px solid {theme['border_focus']};
+        }}
+        QPushButton:pressed {{
+            background-color: {theme['accent']};
+        }}
+        QPushButton:disabled {{
+            background-color: {theme['bg_secondary']};
+            color: {theme['text_secondary']};
+            border: 1px solid {theme['border']};
+        }}
+        QSlider::groove:horizontal {{
+            height: 6px;
+            background: {theme['bg_secondary']};
+            border-radius: 3px;
+        }}
+        QSlider::handle:horizontal {{
+            background: {theme['text_primary']};
+            width: 16px;
+            margin: -5px 0;
+            border-radius: 8px;
+        }}
+        QSpinBox, QDoubleSpinBox, QLineEdit {{
+            background-color: {theme['bg_secondary']};
+            color: {theme['text_primary']};
+            border: 1px solid {theme['border']};
+            border-radius: 4px;
+            padding: 4px;
+            min-width: 50px;
+        }}
+        QCheckBox {{
+            color: {theme['text_primary']};
+            spacing: 6px;
+        }}
+        QCheckBox::indicator {{
+            width: 16px;
+            height: 16px;
+        }}
+        QCheckBox::indicator:unchecked {{
+            border: 1px solid {theme['border']};
+            background-color: {theme['bg_secondary']};
+        }}
+        QCheckBox::indicator:checked {{
+            border: 1px solid {theme['border_focus']};
+            background-color: {theme['accent']};
+        }}
+        QComboBox {{
+            background-color: {theme['bg_secondary']};
+            color: {theme['text_primary']};
+            border: 1px solid {theme['border']};
+            border-radius: 4px;
+            padding: 4px;
+            min-width: 80px;
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 20px;
+        }}
+        QComboBox::down-arrow {{
+            image: none;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 4px solid {theme['text_primary']};
+            width: 0;
+            height: 0;
+            margin-right: 4px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {theme['bg_secondary']};
+            color: {theme['text_primary']};
+            border: 1px solid {theme['border']};
+            selection-background-color: {theme['accent']};
+        }}
+        QLabel {{
+            color: {theme['text_primary']};
+        }}
+        QTabWidget::pane {{
+            border: 2px solid {theme['border']};
+            border-radius: 6px;
+            background-color: {theme['bg_primary']};
+        }}
+        QTabBar::tab {{
+            background-color: {theme['bg_secondary']};
+            color: {theme['text_primary']};
+            border: 1px solid {theme['border']};
+            border-bottom: none;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            padding: 6px 12px;
+            margin-right: 2px;
+        }}
+        QTabBar::tab:selected {{
+            background-color: {theme['bg_primary']};
+            border-bottom: 2px solid {theme['accent']};
+        }}
+        QTabBar::tab:hover {{
+            background-color: {theme['accent_hover']};
+        }}
+        QScrollArea {{
+            border: none;
+            background-color: {theme['bg_primary']};
+        }}
+        QScrollBar:vertical {{
+            background-color: {theme['bg_secondary']};
+            width: 10px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:vertical {{
+            background-color: {theme['accent']};
+            border-radius: 5px;
+            min-height: 20px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background-color: {theme['accent_hover']};
+        }}
+        QScrollBar:horizontal {{
+            background-color: {theme['bg_secondary']};
+            height: 10px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:horizontal {{
+            background-color: {theme['accent']};
+            border-radius: 5px;
+            min-width: 20px;
+        }}
+        QScrollBar::handle:horizontal:hover {{
+            background-color: {theme['accent_hover']};
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+            border: none;
+            background: none;
+        }}
+    """
 
 class NameFetcher(QThread):
     names_ready = pyqtSignal(dict)
@@ -179,6 +453,182 @@ class ZipExtractThread(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+class GameGridMenu(QMenu):
+    def __init__(self, title, parent=None, config=None):
+        super().__init__(title, parent)
+        self.config = config if config else {}
+        theme = self.config.get('theme', 'Gris foncé')
+        theme_colors = THEMES.get(theme, THEMES["Gris foncé"])
+        
+        self.setStyleSheet(f"""
+            QMenu {{
+                background-color: {theme_colors['bg_primary']};
+                border: 2px solid {theme_colors['border']};
+                border-radius: 10px;
+                padding: 10px;
+            }}
+            QMenu::item {{
+                background-color: transparent;
+                color: {theme_colors['text_primary']};
+            }}
+            QMenu::item:selected {{
+                background-color: {theme_colors['bg_secondary']};
+            }}
+        """)
+        
+        self.grid_widget = QWidget()
+        self.grid_widget.setStyleSheet(f"background-color: {theme_colors['bg_primary']};")
+        self.grid_layout = QGridLayout(self.grid_widget)
+        self.grid_layout.setSpacing(8)
+        self.grid_layout.setContentsMargins(10, 10, 10, 10)
+        
+        self.scroll = QScrollArea()
+        self.scroll.setWidget(self.grid_widget)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setStyleSheet(f"""
+            QScrollArea {{
+                border: none;
+                background-color: {theme_colors['bg_primary']};
+            }}
+            QScrollBar:vertical {{
+                background-color: {theme_colors['bg_secondary']};
+                width: 10px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {theme_colors['accent']};
+                border-radius: 5px;
+                min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {theme_colors['accent_hover']};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                border: none;
+                background: none;
+            }}
+            QScrollBar:horizontal {{
+                height: 0px;
+            }}
+        """)
+        
+        grid_width = self.config.get('grid_width', 400)
+        grid_max_height = self.config.get('grid_max_height', 500)
+        self.scroll.setMinimumWidth(grid_width - 20)
+        self.scroll.setMaximumWidth(grid_width)
+        self.scroll.setMaximumHeight(grid_max_height)
+        
+        action = QWidgetAction(self)
+        action.setDefaultWidget(self.scroll)
+        self.addAction(action)
+        
+        self.game_buttons = []
+        
+    def add_game(self, appid, display_name, parent_window, font_size=10, font_family='Segoe UI'):
+        from PyQt5.QtWidgets import QPushButton
+        
+        short_name = display_name
+        max_len = self.config.get('name_max_length', 40)
+        if len(short_name) > max_len:
+            short_name = short_name[:max_len-3] + "..."
+        
+        btn = QPushButton(short_name)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn.setToolTip(display_name)
+        
+        font = QFont(font_family, font_size)
+        btn.setFont(font)
+        
+        btn_min_width = self.config.get('button_min_width', 180)
+        btn_max_width = self.config.get('button_max_width', 250)
+        btn_height = self.config.get('button_height', 40)
+        
+        btn.setMinimumWidth(btn_min_width)
+        btn.setMaximumWidth(btn_max_width)
+        btn.setMinimumHeight(btn_height)
+        
+        theme = self.config.get('theme', 'Gris foncé')
+        theme_colors = THEMES.get(theme, THEMES["Gris foncé"])
+        
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {theme_colors['bg_secondary']};
+                color: {theme_colors['text_primary']};
+                border: 1px solid {theme_colors['border']};
+                border-radius: 4px;
+                padding: 8px;
+                text-align: left;
+                font-size: {font_size}px;
+                font-family: '{font_family}';
+            }}
+            QPushButton:hover {{
+                background-color: {theme_colors['accent_hover']};
+                border: 1px solid {theme_colors['border_focus']};
+            }}
+            QPushButton:pressed {{
+                background-color: {theme_colors['accent']};
+            }}
+        """)
+        
+        def show_game_menu():
+            menu = QMenu(btn)
+            menu.setStyleSheet(f"""
+                QMenu {{
+                    background-color: {theme_colors['bg_primary']};
+                    color: {theme_colors['text_primary']};
+                    border: 2px solid {theme_colors['border']};
+                    border-radius: 6px;
+                    padding: 5px;
+                    font-size: {font_size}px;
+                    font-family: '{font_family}';
+                }}
+                QMenu::item {{
+                    padding: 6px 15px;
+                    border-radius: 3px;
+                    color: {theme_colors['text_primary']};
+                }}
+                QMenu::item:selected {{
+                    background-color: {theme_colors['bg_secondary']};
+                }}
+            """)
+            
+            delete_action = QAction("Supprimer", menu)
+            delete_action.triggered.connect(lambda: parent_window.delete_game(appid))
+            menu.addAction(delete_action)
+            
+            steamdb_action = QAction("SteamDB", menu)
+            steamdb_action.triggered.connect(lambda: parent_window.open_steamdb(appid))
+            menu.addAction(steamdb_action)
+            
+            menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+        
+        btn.clicked.connect(show_game_menu)
+        
+        self.game_buttons.append((appid, btn, display_name))
+        
+    def layout_games(self):
+        for i in reversed(range(self.grid_layout.count())):
+            item = self.grid_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().deleteLater()
+        
+        if not self.game_buttons:
+            return
+        
+        max_cols = self.config.get('grid_columns', 2)
+        
+        row = 0
+        col = 0
+        
+        for appid, btn, full_name in self.game_buttons:
+            self.grid_layout.addWidget(btn, row, col)
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+
 class SettingsDialog(QDialog):
     def __init__(self, parent, config, all_appids, known_names):
         super().__init__(parent)
@@ -187,76 +637,39 @@ class SettingsDialog(QDialog):
         self.all_appids = all_appids
         self.known_names = known_names.copy()
         self.name_fetcher = None
+        
+        # Utiliser la taille configurée
+        width = self.config.get('dialog_width', 600)
+        height = self.config.get('dialog_height', 500)
+        self.resize(width, height)
+        
         self.setWindowTitle("Paramètres")
         self.setModal(True)
-        self.setMinimumWidth(450)
         self.initUI()
         self.fetch_missing_names()
+        center_window(self)
 
     def initUI(self):
-        layout = QVBoxLayout()
+        # Appliquer le thème
+        theme = self.config.get('theme', 'Gris foncé')
+        self.setStyleSheet(get_theme_stylesheet(theme))
         
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2b2b2b;
-                color: #f0f0f0;
-            }
-            QGroupBox {
-                color: #f0f0f0;
-                border: 1px solid #3c3c3c;
-                border-radius: 5px;
-                margin-top: 10px;
-                font-weight: bold;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-            QListWidget {
-                background-color: #3c3c3c;
-                color: #f0f0f0;
-                border: 1px solid #555;
-                border-radius: 3px;
-            }
-            QPushButton {
-                background-color: #3c3c3c;
-                color: #f0f0f0;
-                border: 1px solid #555;
-                border-radius: 3px;
-                padding: 5px 10px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-            }
-            QPushButton:pressed {
-                background-color: #2a2a2a;
-            }
-            QSlider::groove:horizontal {
-                height: 6px;
-                background: #3c3c3c;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #f0f0f0;
-                width: 14px;
-                margin: -4px 0;
-                border-radius: 7px;
-            }
-            QSpinBox {
-                background-color: #3c3c3c;
-                color: #f0f0f0;
-                border: 1px solid #555;
-                border-radius: 3px;
-                padding: 2px;
-            }
-            QCheckBox {
-                color: #f0f0f0;
-            }
-        """)
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(10, 10, 10, 10)
         
+        # Créer les onglets
+        tabs = QTabWidget()
+        
+        # Onglet Général
+        general_tab = QWidget()
+        general_layout = QVBoxLayout(general_tab)
+        general_layout.setSpacing(10)
+        
+        # Taille du logo
         size_group = QGroupBox("Taille du logo")
         size_layout = QHBoxLayout()
+        size_layout.setContentsMargins(10, 10, 10, 10)
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setRange(50, 300)
         self.size_slider.setValue(self.config['icon_size'])
@@ -268,10 +681,76 @@ class SettingsDialog(QDialog):
         size_layout.addWidget(self.size_slider)
         size_layout.addWidget(self.size_spin)
         size_group.setLayout(size_layout)
-        layout.addWidget(size_group)
+        general_layout.addWidget(size_group)
 
+        # Police d'écriture
+        font_group = QGroupBox("Police d'écriture")
+        font_layout = QGridLayout()
+        font_layout.setContentsMargins(10, 10, 10, 10)
+        font_layout.setSpacing(8)
+        
+        font_family_label = QLabel("Famille :")
+        font_family_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        font_layout.addWidget(font_family_label, 0, 0)
+        
+        self.font_family_combo = QComboBox()
+        font_families = QFontDatabase().families()
+        self.font_family_combo.addItems(font_families)
+        index = self.font_family_combo.findText(self.config.get('font_family', 'Segoe UI'))
+        if index >= 0:
+            self.font_family_combo.setCurrentIndex(index)
+        font_layout.addWidget(self.font_family_combo, 0, 1, 1, 2)
+        
+        font_size_label = QLabel("Taille :")
+        font_size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        font_layout.addWidget(font_size_label, 1, 0)
+        
+        self.font_size_slider = QSlider(Qt.Horizontal)
+        self.font_size_slider.setRange(8, 16)
+        self.font_size_slider.setValue(self.config.get('font_size', 10))
+        font_layout.addWidget(self.font_size_slider, 1, 1)
+        
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(8, 16)
+        self.font_size_spin.setValue(self.config.get('font_size', 10))
+        self.font_size_slider.valueChanged.connect(self.font_size_spin.setValue)
+        self.font_size_spin.valueChanged.connect(self.font_size_slider.setValue)
+        font_layout.addWidget(self.font_size_spin, 1, 2)
+        
+        preview_label = QLabel("Aperçu :")
+        preview_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        font_layout.addWidget(preview_label, 2, 0)
+        
+        self.preview_text = QLabel("Furry Tools - Jeux")
+        self.preview_text.setStyleSheet("background-color: #3c3c3c; padding: 4px; border-radius: 3px;")
+        font_layout.addWidget(self.preview_text, 2, 1, 1, 2)
+        
+        font_group.setLayout(font_layout)
+        general_layout.addWidget(font_group)
+
+        # Thème
+        theme_group = QGroupBox("Thème")
+        theme_layout = QHBoxLayout()
+        theme_layout.setContentsMargins(10, 10, 10, 10)
+        
+        theme_label = QLabel("Thème :")
+        theme_layout.addWidget(theme_label)
+        
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(list(THEMES.keys()))
+        self.theme_combo.setCurrentText(self.config.get('theme', 'Gris foncé'))
+        self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
+        theme_layout.addWidget(self.theme_combo)
+        
+        theme_layout.addStretch()
+        theme_group.setLayout(theme_layout)
+        general_layout.addWidget(theme_group)
+
+        # Logo personnalisé
         logo_group = QGroupBox("Logo personnalisé")
         logo_layout = QVBoxLayout()
+        logo_layout.setContentsMargins(10, 10, 10, 10)
+        logo_layout.setSpacing(8)
         self.logo_label = QLabel()
         self.update_logo_display()
         logo_layout.addWidget(self.logo_label)
@@ -285,10 +764,12 @@ class SettingsDialog(QDialog):
         logo_layout.addWidget(reset_logo_btn)
         
         logo_group.setLayout(logo_layout)
-        layout.addWidget(logo_group)
+        general_layout.addWidget(logo_group)
 
+        # Présence Discord
         discord_group = QGroupBox("Présence Discord")
         discord_layout = QVBoxLayout()
+        discord_layout.setContentsMargins(10, 10, 10, 10)
         self.discord_check = QCheckBox("Activer la présence Discord")
         self.discord_check.setChecked(self.config.get('enable_discord_rpc', False))
         if not PPRESENCE_AVAILABLE:
@@ -296,12 +777,156 @@ class SettingsDialog(QDialog):
             self.discord_check.setText("Activer la présence Discord (pypresence non installé)")
         discord_layout.addWidget(self.discord_check)
         discord_group.setLayout(discord_layout)
-        layout.addWidget(discord_group)
+        general_layout.addWidget(discord_group)
 
-        games_group = QGroupBox("Jeux privés")
-        games_layout = QVBoxLayout()
+        general_layout.addStretch()
+        tabs.addTab(general_tab, "Général")
+
+        # Onglet Affichage des jeux
+        games_tab = QWidget()
+        games_layout = QVBoxLayout(games_tab)
+        games_layout.setSpacing(10)
+
+        # Configuration de la grille
+        grid_group = QGroupBox("Configuration de la grille")
+        grid_layout = QGridLayout()
+        grid_layout.setContentsMargins(10, 10, 10, 10)
+        grid_layout.setSpacing(8)
+        
+        # Nombre de colonnes
+        cols_label = QLabel("Nombre de colonnes :")
+        cols_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        grid_layout.addWidget(cols_label, 0, 0)
+        
+        self.grid_cols_spin = QSpinBox()
+        self.grid_cols_spin.setRange(1, 4)
+        self.grid_cols_spin.setValue(self.config.get('grid_columns', 2))
+        grid_layout.addWidget(self.grid_cols_spin, 0, 1)
+        
+        # Largeur de la grille
+        width_label = QLabel("Largeur de la grille (px) :")
+        width_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        grid_layout.addWidget(width_label, 1, 0)
+        
+        self.grid_width_spin = QSpinBox()
+        self.grid_width_spin.setRange(300, 800)
+        self.grid_width_spin.setValue(self.config.get('grid_width', 400))
+        grid_layout.addWidget(self.grid_width_spin, 1, 1)
+        
+        # Hauteur maximale
+        height_label = QLabel("Hauteur maximale (px) :")
+        height_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        grid_layout.addWidget(height_label, 2, 0)
+        
+        self.grid_height_spin = QSpinBox()
+        self.grid_height_spin.setRange(300, 800)
+        self.grid_height_spin.setValue(self.config.get('grid_max_height', 500))
+        grid_layout.addWidget(self.grid_height_spin, 2, 1)
+        
+        grid_group.setLayout(grid_layout)
+        games_layout.addWidget(grid_group)
+
+        # Configuration des boutons
+        btn_group = QGroupBox("Configuration des boutons")
+        btn_layout = QGridLayout()
+        btn_layout.setContentsMargins(10, 10, 10, 10)
+        btn_layout.setSpacing(8)
+        
+        # Largeur min des boutons
+        btn_min_label = QLabel("Largeur min (px) :")
+        btn_min_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        btn_layout.addWidget(btn_min_label, 0, 0)
+        
+        self.btn_min_spin = QSpinBox()
+        self.btn_min_spin.setRange(120, 300)
+        self.btn_min_spin.setValue(self.config.get('button_min_width', 180))
+        btn_layout.addWidget(self.btn_min_spin, 0, 1)
+        
+        # Largeur max des boutons
+        btn_max_label = QLabel("Largeur max (px) :")
+        btn_max_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        btn_layout.addWidget(btn_max_label, 1, 0)
+        
+        self.btn_max_spin = QSpinBox()
+        self.btn_max_spin.setRange(150, 400)
+        self.btn_max_spin.setValue(self.config.get('button_max_width', 250))
+        btn_layout.addWidget(self.btn_max_spin, 1, 1)
+        
+        # Hauteur des boutons
+        btn_height_label = QLabel("Hauteur (px) :")
+        btn_height_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        btn_layout.addWidget(btn_height_label, 2, 0)
+        
+        self.btn_height_spin = QSpinBox()
+        self.btn_height_spin.setRange(30, 80)
+        self.btn_height_spin.setValue(self.config.get('button_height', 40))
+        btn_layout.addWidget(self.btn_height_spin, 2, 1)
+        
+        # Longueur max des noms
+        name_len_label = QLabel("Longueur max des noms :")
+        name_len_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        btn_layout.addWidget(name_len_label, 3, 0)
+        
+        self.name_len_spin = QSpinBox()
+        self.name_len_spin.setRange(20, 60)
+        self.name_len_spin.setValue(self.config.get('name_max_length', 40))
+        btn_layout.addWidget(self.name_len_spin, 3, 1)
+        
+        btn_group.setLayout(btn_layout)
+        games_layout.addWidget(btn_group)
+
+        games_layout.addStretch()
+        tabs.addTab(games_tab, "Affichage des jeux")
+
+        # Onglet Taille de la fenêtre
+        window_tab = QWidget()
+        window_layout = QVBoxLayout(window_tab)
+        window_layout.setSpacing(10)
+
+        window_group = QGroupBox("Taille de la fenêtre des paramètres")
+        window_grid = QGridLayout()
+        window_grid.setContentsMargins(10, 10, 10, 10)
+        window_grid.setSpacing(8)
+        
+        # Largeur
+        dialog_width_label = QLabel("Largeur (px) :")
+        dialog_width_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        window_grid.addWidget(dialog_width_label, 0, 0)
+        
+        self.dialog_width_spin = QSpinBox()
+        self.dialog_width_spin.setRange(400, 1000)
+        self.dialog_width_spin.setValue(self.config.get('dialog_width', 600))
+        window_grid.addWidget(self.dialog_width_spin, 0, 1)
+        
+        # Hauteur
+        dialog_height_label = QLabel("Hauteur (px) :")
+        dialog_height_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        window_grid.addWidget(dialog_height_label, 1, 0)
+        
+        self.dialog_height_spin = QSpinBox()
+        self.dialog_height_spin.setRange(400, 900)
+        self.dialog_height_spin.setValue(self.config.get('dialog_height', 500))
+        window_grid.addWidget(self.dialog_height_spin, 1, 1)
+        
+        window_group.setLayout(window_grid)
+        window_layout.addWidget(window_group)
+        window_layout.addStretch()
+        tabs.addTab(window_tab, "Fenêtre")
+
+        # Onglet Jeux privés
+        private_tab = QWidget()
+        private_layout = QVBoxLayout(private_tab)
+        private_layout.setSpacing(10)
+
+        private_group = QGroupBox("Jeux privés")
+        private_grid = QVBoxLayout()
+        private_grid.setContentsMargins(10, 10, 10, 10)
+        
         self.games_list = QListWidget()
         self.games_list.setSelectionMode(QListWidget.NoSelection)
+        self.games_list.setWordWrap(True)
+        self.games_list.setUniformItemSizes(False)
+        self.games_list.setMinimumHeight(200)
         self.list_items = {}
         
         for appid in sorted(self.all_appids):
@@ -310,24 +935,45 @@ class SettingsDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked if appid in self.config['private_games'] else Qt.Unchecked)
             item.setData(Qt.UserRole, appid)
+            item.setSizeHint(QSize(item.sizeHint().width(), 30))
             self.games_list.addItem(item)
             self.list_items[appid] = item
         
-        games_layout.addWidget(self.games_list)
-        games_group.setLayout(games_layout)
-        layout.addWidget(games_group)
+        private_grid.addWidget(self.games_list)
+        private_group.setLayout(private_grid)
+        private_layout.addWidget(private_group)
 
+        tabs.addTab(private_tab, "Jeux privés")
+
+        main_layout.addWidget(tabs)
+
+        # Boutons OK/Annuler
         buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(10)
         ok_btn = QPushButton("OK")
+        ok_btn.setMinimumWidth(80)
         ok_btn.clicked.connect(self.accept)
         cancel_btn = QPushButton("Annuler")
+        cancel_btn.setMinimumWidth(80)
         cancel_btn.clicked.connect(self.reject)
         buttons_layout.addStretch()
         buttons_layout.addWidget(ok_btn)
         buttons_layout.addWidget(cancel_btn)
-        layout.addLayout(buttons_layout)
+        main_layout.addLayout(buttons_layout)
         
-        self.setLayout(layout)
+        self.setLayout(main_layout)
+        
+        self.font_family_combo.currentTextChanged.connect(self.update_preview_font)
+        self.font_size_slider.valueChanged.connect(self.update_preview_font)
+
+    def on_theme_changed(self, theme_name):
+        self.setStyleSheet(get_theme_stylesheet(theme_name))
+
+    def update_preview_font(self):
+        family = self.font_family_combo.currentText()
+        size = self.font_size_slider.value()
+        font = QFont(family, size)
+        self.preview_text.setFont(font)
 
     def update_logo_display(self):
         if self.config.get('logo_path') and os.path.exists(self.config['logo_path']):
@@ -374,6 +1020,19 @@ class SettingsDialog(QDialog):
     def get_updated_config(self):
         self.config['icon_size'] = self.size_slider.value()
         self.config['enable_discord_rpc'] = self.discord_check.isChecked()
+        self.config['font_family'] = self.font_family_combo.currentText()
+        self.config['font_size'] = self.font_size_slider.value()
+        self.config['theme'] = self.theme_combo.currentText()
+        self.config['grid_columns'] = self.grid_cols_spin.value()
+        self.config['grid_width'] = self.grid_width_spin.value()
+        self.config['grid_max_height'] = self.grid_height_spin.value()
+        self.config['button_min_width'] = self.btn_min_spin.value()
+        self.config['button_max_width'] = self.btn_max_spin.value()
+        self.config['button_height'] = self.btn_height_spin.value()
+        self.config['name_max_length'] = self.name_len_spin.value()
+        self.config['dialog_width'] = self.dialog_width_spin.value()
+        self.config['dialog_height'] = self.dialog_height_spin.value()
+        
         private = []
         for i in range(self.games_list.count()):
             item = self.games_list.item(i)
@@ -390,61 +1049,37 @@ class ProfileCreationDialog(QDialog):
         self.known_names = known_names
         self.setWindowTitle("Créer un profile")
         self.setModal(True)
-        self.setMinimumWidth(500)
-        self.setMinimumHeight(400)
+        
+        # Utiliser la configuration du parent
+        if hasattr(parent, 'config'):
+            self.config = parent.config
+        else:
+            self.config = load_config()
+        
+        width = self.config.get('dialog_width', 500)
+        height = self.config.get('dialog_height', 550)
+        self.resize(width, height)
+        
         self.initUI()
+        center_window(self)
 
     def initUI(self):
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2b2b2b;
-                color: #f0f0f0;
-            }
-            QGroupBox {
-                color: #f0f0f0;
-                border: 1px solid #3c3c3c;
-                border-radius: 5px;
-                margin-top: 10px;
-                font-weight: bold;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-            QListWidget {
-                background-color: #3c3c3c;
-                color: #f0f0f0;
-                border: 1px solid #555;
-                border-radius: 3px;
-            }
-            QPushButton {
-                background-color: #3c3c3c;
-                color: #f0f0f0;
-                border: 1px solid #555;
-                border-radius: 3px;
-                padding: 5px 10px;
-                min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-            }
-            QPushButton:pressed {
-                background-color: #2a2a2a;
-            }
-            QCheckBox {
-                color: #f0f0f0;
-            }
-        """)
+        theme = self.config.get('theme', 'Gris foncé')
+        self.setStyleSheet(get_theme_stylesheet(theme))
         
         layout = QVBoxLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(15, 15, 15, 15)
         
         label = QLabel("Sélectionnez les jeux à inclure dans le profile :")
-        label.setStyleSheet("color: #f0f0f0;")
+        label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
 
         self.games_list = QListWidget()
         self.games_list.setSelectionMode(QListWidget.NoSelection)
+        self.games_list.setWordWrap(True)
+        self.games_list.setUniformItemSizes(False)
+        self.games_list.setMinimumHeight(250)
         self.list_items = {}
         
         for appid in sorted(self.appids_with_paths.keys()):
@@ -453,6 +1088,7 @@ class ProfileCreationDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             item.setData(Qt.UserRole, appid)
+            item.setSizeHint(QSize(item.sizeHint().width(), 30))
             self.games_list.addItem(item)
             self.list_items[appid] = item
         
@@ -471,8 +1107,10 @@ class ProfileCreationDialog(QDialog):
 
         buttons_layout = QHBoxLayout()
         create_btn = QPushButton("Créer")
+        create_btn.setMinimumWidth(100)
         create_btn.clicked.connect(self.create_profile)
         cancel_btn = QPushButton("Annuler")
+        cancel_btn.setMinimumWidth(100)
         cancel_btn.clicked.connect(self.reject)
         buttons_layout.addStretch()
         buttons_layout.addWidget(create_btn)
@@ -515,6 +1153,7 @@ class ProfileCreationDialog(QDialog):
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setAutoClose(True)
         self.progress_dialog.setAutoReset(True)
+        self.progress_dialog.setMinimumWidth(350)
         self.progress_dialog.canceled.connect(self.thread.terminate)
         self.thread.progress.connect(self.progress_dialog.setValue)
         self.thread.finished.connect(self.on_creation_finished)
@@ -530,35 +1169,18 @@ class ProfileCreationDialog(QDialog):
         self.progress_dialog.close()
         QMessageBox.critical(self, "Erreur", f"Échec de la création du profile :\n{error_msg}")
 
-class FurryTools(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.config = load_config()
-        self.steam_folder = None
-        self.steam_path = None
-        self.target_folder = None
-        self.detect_steam_path()
-        self.movie = None
-        self.game_names = load_cache()
-        self.name_fetcher = None
-        self.file_map = {}
-        self.discord_rpc_thread = None
-        self.discord_rpc_active = False
-        
-        self.initUI()
-        self.drag_position = None
-        self.start_discord_rpc_if_enabled()
-
-    def detect_steam_path(self):
+class SteamPathDetector(QThread):
+    finished = pyqtSignal(object, object, object)
+    def run(self):
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam")
             steam_reg_path, _ = winreg.QueryValueEx(key, "SteamPath")
             winreg.CloseKey(key)
             steam_reg_path = steam_reg_path.replace('/', '\\')
             if os.path.exists(os.path.join(steam_reg_path, "steam.exe")):
-                self.steam_folder = steam_reg_path
-                self.steam_path = os.path.join(steam_reg_path, "steam.exe")
-                self.target_folder = os.path.join(steam_reg_path, "config", "stplug-in")
+                self.finished.emit(steam_reg_path,
+                                 os.path.join(steam_reg_path, "steam.exe"),
+                                 os.path.join(steam_reg_path, "config", "stplug-in"))
                 return
         except:
             pass
@@ -577,27 +1199,58 @@ class FurryTools(QWidget):
             expanded = os.path.expandvars(path)
             steam_exe = os.path.join(expanded, "steam.exe")
             if os.path.exists(steam_exe):
-                self.steam_folder = expanded
-                self.steam_path = steam_exe
-                self.target_folder = os.path.join(expanded, "config", "stplug-in")
+                self.finished.emit(expanded, steam_exe, os.path.join(expanded, "config", "stplug-in"))
                 return
         
-        reply = QMessageBox.question(None, "Steam non trouvé",
+        self.finished.emit(None, None, None)
+
+class FurryTools(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.config = load_config()
+        self.steam_folder = None
+        self.steam_path = None
+        self.target_folder = None
+        self.movie = None
+        self.game_names = load_cache()
+        self.name_fetcher = None
+        self.file_map = {}
+        self.discord_rpc_thread = None
+        self.discord_rpc_active = False
+        self.public_grid_menu = None
+        self.private_grid_menu = None
+        
+        self.initUI()
+        self.drag_position = None
+        self.start_discord_rpc_if_enabled()
+        
+        QTimer.singleShot(100, self.detect_steam_path_async)
+
+    def detect_steam_path_async(self):
+        self.detector = SteamPathDetector()
+        self.detector.finished.connect(self.on_steam_path_detected)
+        self.detector.start()
+
+    def on_steam_path_detected(self, folder, exe, target):
+        self.steam_folder = folder
+        self.steam_path = exe
+        self.target_folder = target
+        
+        if folder is None:
+            QTimer.singleShot(200, self.ask_steam_path_manually)
+
+    def ask_steam_path_manually(self):
+        reply = QMessageBox.question(self, "Steam non trouvé",
                                    "Impossible de trouver Steam automatiquement.\n"
                                    "Voulez-vous sélectionner le dossier Steam manuellement ?",
                                    QMessageBox.Yes | QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            folder = QFileDialog.getExistingDirectory(None, "Sélectionner le dossier Steam")
+            folder = QFileDialog.getExistingDirectory(self, "Sélectionner le dossier Steam")
             if folder and os.path.exists(os.path.join(folder, "steam.exe")):
                 self.steam_folder = folder
                 self.steam_path = os.path.join(folder, "steam.exe")
                 self.target_folder = os.path.join(folder, "config", "stplug-in")
-                return
-        
-        self.steam_folder = None
-        self.steam_path = None
-        self.target_folder = None
 
     def initUI(self):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -613,48 +1266,58 @@ class FurryTools(QWidget):
         
         self.setAcceptDrops(True)
 
-        menu_style = """
-            QMenu {
-                background-color: #2b2b2b;
-                color: #f0f0f0;
-                border: 1px solid #3c3c3c;
-                border-radius: 8px;
+        base_font = QFont(self.config.get('font_family', 'Segoe UI'), self.config.get('font_size', 10))
+        
+        screen = QApplication.primaryScreen()
+        dpi = screen.logicalDotsPerInch() if screen else 96
+        font_size = max(10, int(self.config.get('font_size', 10) * dpi / 96))
+        
+        theme = self.config.get('theme', 'Gris foncé')
+        theme_colors = THEMES.get(theme, THEMES["Gris foncé"])
+        
+        menu_style = f"""
+            QMenu {{
+                background-color: {theme_colors['bg_primary']};
+                color: {theme_colors['text_primary']};
+                border: 2px solid {theme_colors['border']};
+                border-radius: 10px;
                 padding: 5px 0px;
-                font-size: 12px;
-            }
-            QMenu::item {
+                font-size: {font_size}px;
+                font-family: '{self.config.get('font_family', 'Segoe UI')}';
+            }}
+            QMenu::item {{
                 background-color: transparent;
                 padding: 8px 25px;
                 margin: 2px 5px;
                 border-radius: 5px;
-            }
-            QMenu::item:selected {
-                background-color: #3c3c3c;
-                color: #ffffff;
-            }
-            QMenu::item:disabled {
-                color: #6c6c6c;
-                background-color: transparent;
-            }
-            QMenu::separator {
+                color: {theme_colors['text_primary']};
+            }}
+            QMenu::item:selected {{
+                background-color: {theme_colors['bg_secondary']};
+            }}
+            QMenu::item:disabled {{
+                color: {theme_colors['text_secondary']};
+            }}
+            QMenu::separator {{
                 height: 1px;
-                background-color: #3c3c3c;
+                background-color: {theme_colors['border']};
                 margin: 5px 10px;
-            }
+            }}
+            QMenu::icon {{
+                padding-right: 10px;
+            }}
         """
         
         self.context_menu = QMenu(self)
         self.context_menu.setStyleSheet(menu_style)
 
-        self.jeux_menu = QMenu("Jeux", self)
+        self.jeux_menu = self.context_menu.addMenu("Jeux")
         self.jeux_menu.setStyleSheet(menu_style)
         self.jeux_menu.aboutToShow.connect(self.safe_populate_jeux_menu)
-        self.context_menu.addMenu(self.jeux_menu)
 
-        self.profile_menu = QMenu("Profile", self)
+        self.profile_menu = self.context_menu.addMenu("Profile")
         self.profile_menu.setStyleSheet(menu_style)
         self.profile_menu.aboutToShow.connect(self.populate_profile_menu)
-        self.context_menu.addMenu(self.profile_menu)
 
         self.restart_action = self.context_menu.addAction("Redémarrer Steam")
         self.restart_action.triggered.connect(self.restart_steam)
@@ -679,6 +1342,12 @@ class FurryTools(QWidget):
         
         steamtools_action = self.context_menu.addAction("Downloads SteamTools")
         steamtools_action.triggered.connect(self.download_steamtools)
+
+        open_cache_action = self.context_menu.addAction("Ouvrir le dossier cache")
+        open_cache_action.triggered.connect(self.open_cache_folder)
+
+        clear_cache_action = self.context_menu.addAction("Vider le cache")
+        clear_cache_action.triggered.connect(self.clear_app_cache)
         
         quit_action = self.context_menu.addAction("Quitter Furry Tools")
         quit_action.triggered.connect(self.close_application)
@@ -732,7 +1401,10 @@ class FurryTools(QWidget):
 
         self.logo_label.setText("🐾")
         self.logo_label.setAlignment(Qt.AlignCenter)
-        self.logo_label.setStyleSheet("font-size: 80px; color: #ccc;")
+        screen = QApplication.primaryScreen()
+        dpi = screen.logicalDotsPerInch() if screen else 96
+        scaled_size = max(40, int(80 * dpi / 96))
+        self.logo_label.setStyleSheet(f"font-size: {scaled_size}px; color: #ccc;")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -756,11 +1428,12 @@ class FurryTools(QWidget):
                     self.restart_action.setText("Redémarrer Steam")
                 else:
                     self.restart_action.setText("Lancer Steam")
+                self.restart_action.setEnabled(True)
             else:
                 self.restart_action.setText("Steam non trouvé")
                 self.restart_action.setEnabled(False)
             
-            self.context_menu.exec_(QCursor.pos())
+            self.context_menu.exec_(event.globalPos())
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur menu: {str(e)}")
 
@@ -792,6 +1465,29 @@ class FurryTools(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le dossier: {e}")
 
+    def open_cache_folder(self):
+        try:
+            if not os.path.exists(CONFIG_DIR):
+                os.makedirs(CONFIG_DIR)
+            os.startfile(CONFIG_DIR)
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le dossier cache: {e}")
+
+    def clear_app_cache(self):
+        reply = QMessageBox.question(self, "Confirmation",
+                                   "Voulez-vous vraiment vider tout le cache ?\n"
+                                   "Cela supprimera tous les noms de jeux en cache.",
+                                   QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            try:
+                if os.path.exists(CACHE_FILE):
+                    os.remove(CACHE_FILE)
+                self.game_names = {}
+                QMessageBox.information(self, "Succès", "Cache vidé avec succès.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erreur", f"Impossible de vider le cache: {e}")
+
     def extract_appid_from_clipboard(self):
         clipboard = QApplication.clipboard()
         text = clipboard.text()
@@ -818,7 +1514,9 @@ class FurryTools(QWidget):
                     pass
             
             dialog = SettingsDialog(self, self.config, current_appids, self.game_names)
-            if dialog.exec_() == QDialog.Accepted:
+            dialog.exec_()
+            
+            if dialog.result() == QDialog.Accepted:
                 new_config = dialog.get_updated_config()
                 old_discord_enabled = self.config.get('enable_discord_rpc', False)
                 new_discord_enabled = new_config.get('enable_discord_rpc', False)
@@ -936,6 +1634,7 @@ class FurryTools(QWidget):
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setAutoClose(True)
         self.progress_dialog.setAutoReset(True)
+        self.progress_dialog.setMinimumWidth(350)
         self.progress_dialog.canceled.connect(self.extract_thread.terminate)
         self.extract_thread.progress.connect(self.progress_dialog.setValue)
         self.extract_thread.finished.connect(self.on_import_finished)
@@ -958,8 +1657,9 @@ class FurryTools(QWidget):
         try:
             self.populate_jeux_menu()
         except Exception as e:
+            error_msg = traceback.format_exc()
             self.jeux_menu.clear()
-            error_action = self.jeux_menu.addAction(f"Erreur de chargement")
+            error_action = self.jeux_menu.addAction("Erreur de chargement")
             error_action.setEnabled(False)
 
     def populate_jeux_menu(self):
@@ -973,7 +1673,7 @@ class FurryTools(QWidget):
         try:
             files = [f for f in os.listdir(self.target_folder) if f.lower().endswith('.lua')]
         except Exception as e:
-            action = self.jeux_menu.addAction(f"Erreur accès dossier")
+            action = self.jeux_menu.addAction("Erreur accès dossier")
             action.setEnabled(False)
             return
         
@@ -989,19 +1689,26 @@ class FurryTools(QWidget):
         public_appids = [aid for aid in appids if aid not in private_set]
         private_appids = [aid for aid in appids if aid in private_set]
         
+        font_size = self.config.get('font_size', 10)
+        font_family = self.config.get('font_family', 'Segoe UI')
+        
         if public_appids:
-            public_menu = QMenu("Public", self)
-            public_menu.setStyleSheet(self.context_menu.styleSheet())
-            self._build_game_submenu(public_menu, public_appids)
+            public_menu = GameGridMenu("Public", self, self.config)
+            for appid in sorted(public_appids):
+                display_name = self.game_names.get(appid, appid)
+                public_menu.add_game(appid, display_name, self, font_size, font_family)
+            public_menu.layout_games()
             self.jeux_menu.addMenu(public_menu)
         else:
             action = self.jeux_menu.addAction("Public (aucun)")
             action.setEnabled(False)
         
         if private_appids:
-            private_menu = QMenu("Privé", self)
-            private_menu.setStyleSheet(self.context_menu.styleSheet())
-            self._build_game_submenu(private_menu, private_appids)
+            private_menu = GameGridMenu("Privé", self, self.config)
+            for appid in sorted(private_appids):
+                display_name = self.game_names.get(appid, appid)
+                private_menu.add_game(appid, display_name, self, font_size, font_family)
+            private_menu.layout_games()
             self.jeux_menu.addMenu(private_menu)
         else:
             action = self.jeux_menu.addAction("Privé (aucun)")
@@ -1020,22 +1727,6 @@ class FurryTools(QWidget):
         self.name_fetcher.names_ready.connect(self.on_names_fetched)
         self.name_fetcher.error_occurred.connect(lambda msg: print(f"Erreur fetch: {msg}"))
         self.name_fetcher.start()
-
-    def _build_game_submenu(self, menu, appids):
-        for appid in sorted(appids):
-            display_name = self.game_names.get(appid, appid)
-            game_submenu = QMenu(display_name, self)
-            game_submenu.setStyleSheet(self.context_menu.styleSheet())
-            
-            delete_action = QAction("Supprimer", self)
-            delete_action.triggered.connect(lambda checked, a=appid: self.delete_game(a))
-            game_submenu.addAction(delete_action)
-            
-            steamdb_action = QAction("SteamDB", self)
-            steamdb_action.triggered.connect(lambda checked, a=appid: self.open_steamdb(a))
-            game_submenu.addAction(steamdb_action)
-            
-            menu.addMenu(game_submenu)
 
     def on_names_fetched(self, new_names):
         self.game_names.update(new_names)
@@ -1188,12 +1879,12 @@ def single_instance_check():
     return True
 
 def main():
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')
+    
     if not single_instance_check():
         QMessageBox.critical(None, "Erreur", "Furry Tools est déjà en cours d'exécution.")
         return
-    
-    app = QApplication(sys.argv)
-    app.setStyle('Fusion')
     
     window = FurryTools()
     window.show()
