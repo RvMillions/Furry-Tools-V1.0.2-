@@ -992,6 +992,7 @@ class SettingsDialog(QDialog):
         self.name_fetcher = None
         self.update_checker = None
         self.update_downloader = None
+        self.latest_version = None
         
         width = self.config.get('dialog_width', 600)
         height = self.config.get('dialog_height', 600)
@@ -1397,20 +1398,13 @@ class SettingsDialog(QDialog):
 
     def download_update(self):
         try:
-            req = urllib.request.Request(API_URL, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode())
-                if data.get('assets') and len(data['assets']) > 0:
-                    download_url = data['assets'][0]['browser_download_url']
-                else:
-                    QDesktopServices.openUrl(QUrl(REPO_URL))
-                    return
-
-            save_path = os.path.join(tempfile.gettempdir(), f"FurryTools_Update_{self.latest_version}.exe")
+            download_url = f"https://github.com/RvMillions/Furry-Tools/archive/refs/heads/main.zip"
+            save_path = os.path.join(tempfile.gettempdir(), f"FurryTools_Update_{self.latest_version}.zip")
             
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
             self.download_btn.setEnabled(False)
+            self.update_status_label.setText("Téléchargement en cours...")
             
             self.update_downloader = UpdateDownloader(download_url, save_path)
             self.update_downloader.progress.connect(self.progress_bar.setValue)
@@ -1423,17 +1417,69 @@ class SettingsDialog(QDialog):
     def on_download_finished(self, file_path):
         self.progress_bar.setVisible(False)
         reply = QMessageBox.question(self, "Mise à jour téléchargée",
-                                   f"La mise à jour a été téléchargée.\nVoulez-vous lancer l'installateur maintenant ?",
+                                   f"La mise à jour a été téléchargée.\nVoulez-vous l'installer maintenant ?",
                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            os.startfile(file_path)
-            QApplication.quit()
+            self.install_update(file_path)
+
+    def install_update(self, zip_path):
+        try:
+            extract_dir = os.path.join(tempfile.gettempdir(), f"FurryTools_Update_{self.latest_version}")
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir)
+            os.makedirs(extract_dir)
+            
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+            
+            extracted_folders = [f for f in os.listdir(extract_dir) if os.path.isdir(os.path.join(extract_dir, f))]
+            if extracted_folders:
+                source_dir = os.path.join(extract_dir, extracted_folders[0])
+            else:
+                source_dir = extract_dir
+            
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            backup_dir = os.path.join(tempfile.gettempdir(), f"FurryTools_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            shutil.copytree(current_dir, backup_dir)
+            
+            for item in os.listdir(source_dir):
+                s = os.path.join(source_dir, item)
+                d = os.path.join(current_dir, item)
+                if os.path.isdir(s):
+                    if os.path.exists(d):
+                        shutil.rmtree(d)
+                    shutil.copytree(s, d)
+                else:
+                    if os.path.exists(d):
+                        os.remove(d)
+                    shutil.copy2(s, d)
+            
+            QMessageBox.information(self, "Mise à jour terminée",
+                                   f"La mise à jour a été installée avec succès.\nUne sauvegarde de l'ancienne version a été créée dans :\n{backup_dir}")
+            
+            reply = QMessageBox.question(self, "Redémarrer",
+                                       "L'application va redémarrer pour appliquer les changements.\nVoulez-vous continuer ?",
+                                       QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                python = sys.executable
+                os.execl(python, python, *sys.argv)
+            else:
+                self.accept()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur d'installation",
+                               f"Une erreur est survenue lors de l'installation : {str(e)}")
 
     def on_download_error(self, error_msg):
         self.progress_bar.setVisible(False)
-        QMessageBox.critical(self, "Erreur de téléchargement",
-                           f"Erreur lors du téléchargement: {error_msg}\n\nOuverture de la page GitHub...")
-        QDesktopServices.openUrl(QUrl(REPO_URL))
+        reply = QMessageBox.question(self, "Erreur de téléchargement",
+                                   f"Erreur lors du téléchargement: {error_msg}\n\nVoulez-vous ouvrir la page GitHub pour télécharger manuellement ?",
+                                   QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl(REPO_URL))
+        self.download_btn.setEnabled(True)
+        self.update_status_label.setText("Une nouvelle version est disponible !")
 
     def on_theme_changed(self, theme_name):
         self.setStyleSheet(get_theme_stylesheet(theme_name))
