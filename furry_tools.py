@@ -233,7 +233,8 @@ def load_config():
         'theme': 'Gris foncé',
         'start_with_windows': False,
         'auto_launch_steam': False,
-        'auto_check_updates': True
+        'auto_check_updates': True,
+        'auto_add_all_dlc': False
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -281,13 +282,10 @@ def get_scaled_font(base_size=10, base_family='Segoe UI'):
     screen = QApplication.primaryScreen()
     if not screen:
         return QFont(base_family, base_size)
-    
     dpi = screen.logicalDotsPerInch()
     scale_factor = dpi / 96.0
-    
     if scale_factor < 1.0:
         scale_factor = 1.0
-    
     scaled_size = max(8, int(base_size * scale_factor))
     return QFont(base_family, scaled_size)
 
@@ -295,15 +293,10 @@ def get_scaled_size(base_width, base_height, config=None):
     screen = QApplication.primaryScreen()
     if not screen:
         return base_width, base_height
-    
     rect = screen.availableGeometry()
-    screen_width = rect.width()
-    screen_height = rect.height()
-    
     if config and 'dialog_width' in config:
         base_width = config['dialog_width']
         base_height = config['dialog_height']
-    
     return base_width, base_height
 
 def center_window(window):
@@ -311,10 +304,6 @@ def center_window(window):
     screen = QApplication.primaryScreen().availableGeometry().center()
     frame.moveCenter(screen)
     window.move(frame.topLeft())
-
-def adjust_widget_font(widget, base_size, base_family):
-    font = get_scaled_font(base_size, base_family)
-    widget.setFont(font)
 
 def get_theme_stylesheet(theme_name):
     theme = THEMES.get(theme_name, THEMES["Gris foncé"])
@@ -504,7 +493,6 @@ def add_to_startup():
         winreg.CloseKey(key)
         return True
     except Exception as e:
-        print(f"Erreur ajout démarrage: {e}")
         return False
 
 def remove_from_startup():
@@ -516,7 +504,6 @@ def remove_from_startup():
         winreg.CloseKey(key)
         return True
     except Exception as e:
-        print(f"Erreur suppression démarrage: {e}")
         return False
 
 def is_in_startup():
@@ -529,6 +516,388 @@ def is_in_startup():
         return True
     except:
         return False
+
+class GameDLCDownloadThread(QThread):
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(list, list, list)
+    error = pyqtSignal(str)
+    
+    def __init__(self, game_appid, target_folder):
+        super().__init__()
+        self.game_appid = game_appid
+        self.target_folder = target_folder
+        
+    def run(self):
+        added_dlcs = []
+        skipped_dlcs = []
+        failed_dlcs = []
+        try:
+            url = f"https://store.steampowered.com/api/appdetails?appids={self.game_appid}&l=french"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode())
+                if data.get(self.game_appid, {}).get('success'):
+                    game_data = data[self.game_appid]['data']
+                    if game_data.get('dlc'):
+                        total_dlcs = len(game_data['dlc'])
+                        steamtools_file = os.path.join(self.target_folder, "Steamtools.lua")
+                        
+                        existing_lines = []
+                        if os.path.exists(steamtools_file):
+                            with open(steamtools_file, 'r', encoding='utf-8') as f:
+                                existing_lines = f.read().splitlines()
+                        
+                        for i, dlc_id in enumerate(game_data['dlc']):
+                            percent = int((i + 1) * 100 / total_dlcs)
+                            self.progress.emit(percent, f"Vérification DLC {dlc_id}...")
+                            
+                            line_to_add = f"addappid({dlc_id}, 1)"
+                            
+                            if line_to_add not in existing_lines:
+                                try:
+                                    with open(steamtools_file, 'a', encoding='utf-8') as f:
+                                        f.write(line_to_add + "\n")
+                                    added_dlcs.append(str(dlc_id))
+                                    self.progress.emit(percent, f"Ajouté DLC {dlc_id}")
+                                except Exception as e:
+                                    failed_dlcs.append(str(dlc_id))
+                                    self.progress.emit(percent, f"Échec DLC {dlc_id}")
+                            else:
+                                skipped_dlcs.append(str(dlc_id))
+                                self.progress.emit(percent, f"DLC {dlc_id} déjà présent")
+            self.finished.emit(added_dlcs, skipped_dlcs, failed_dlcs)
+        except Exception as e:
+            self.error.emit(str(e))
+
+class SelectGameForDLCDialog(QDialog):
+    def __init__(self, parent, config, target_folder, games_with_dlc_status, game_names):
+        super().__init__(parent)
+        self.parent = parent
+        self.config = config
+        self.target_folder = target_folder
+        self.games_with_dlc_status = games_with_dlc_status
+        self.game_names = game_names
+        self.selected_games = []
+        
+        theme = self.config.get('theme', 'Gris foncé')
+        self.setStyleSheet(get_theme_stylesheet(theme))
+        self.setWindowTitle("Sélectionner les jeux pour ajouter les DLC")
+        self.setModal(True)
+        width, height = get_scaled_size(600, 500)
+        self.resize(width, height)
+        self.initUI()
+        center_window(self)
+        
+    def initUI(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(15, 15, 15, 15)
+        
+        info_label = QLabel("Sélectionnez les jeux pour lesquels vous voulez ajouter tous les DLC manquants :")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        self.games_list = QListWidget()
+        self.games_list.setSelectionMode(QListWidget.MultiSelection)
+        theme = self.config.get('theme', 'Gris foncé')
+        theme_colors = THEMES.get(theme, THEMES["Gris foncé"])
+        self.games_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {theme_colors['bg_secondary']};
+                color: {theme_colors['text_primary']};
+                border: 1px solid {theme_colors['border']};
+                border-radius: 4px;
+                padding: 4px;
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 8px;
+                border-bottom: 1px solid {theme_colors['border']};
+                color: {theme_colors['text_primary']};
+                background-color: {theme_colors['bg_secondary']};
+            }}
+            QListWidget::item:selected {{
+                background-color: {theme_colors['accent']};
+                color: {theme_colors['text_primary']};
+            }}
+            QListWidget::item:hover {{
+                background-color: {theme_colors['accent_hover']};
+            }}
+        """)
+        
+        for appid, (name, missing_count) in self.games_with_dlc_status.items():
+            item = QListWidgetItem(f"{name} (APPID: {appid}) - {missing_count} DLC manquant(s)")
+            item.setData(Qt.UserRole, appid)
+            self.games_list.addItem(item)
+        
+        layout.addWidget(self.games_list)
+        
+        select_buttons_layout = QHBoxLayout()
+        select_all_btn = QPushButton("Tout sélectionner")
+        select_all_btn.clicked.connect(self.select_all)
+        deselect_all_btn = QPushButton("Tout désélectionner")
+        deselect_all_btn.clicked.connect(self.deselect_all)
+        select_buttons_layout.addStretch()
+        select_buttons_layout.addWidget(select_all_btn)
+        select_buttons_layout.addWidget(deselect_all_btn)
+        select_buttons_layout.addStretch()
+        layout.addLayout(select_buttons_layout)
+        
+        buttons_layout = QHBoxLayout()
+        add_btn = QPushButton("Ajouter les DLC sélectionnés")
+        add_btn.setMinimumWidth(150)
+        add_btn.clicked.connect(self.add_selected_dlcs)
+        cancel_btn = QPushButton("Annuler")
+        cancel_btn.setMinimumWidth(100)
+        cancel_btn.clicked.connect(self.reject)
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(add_btn)
+        buttons_layout.addWidget(cancel_btn)
+        layout.addLayout(buttons_layout)
+        
+        self.setLayout(layout)
+    
+    def select_all(self):
+        self.games_list.selectAll()
+    
+    def deselect_all(self):
+        self.games_list.clearSelection()
+    
+    def add_selected_dlcs(self):
+        self.selected_games = []
+        for item in self.games_list.selectedItems():
+            appid = item.data(Qt.UserRole)
+            if appid:
+                self.selected_games.append(appid)
+        
+        if not self.selected_games:
+            QMessageBox.warning(self, "Aucune sélection", "Veuillez sélectionner au moins un jeu.")
+            return
+        
+        self.accept()
+
+class SteamDLCSearchThread(QThread):
+    results_ready = pyqtSignal(list)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, query):
+        super().__init__()
+        self.query = query
+
+    def run(self):
+        results = []
+        try:
+            import urllib.parse
+            encoded_query = urllib.parse.quote(self.query)
+            
+            url = f"https://store.steampowered.com/api/storesearch/?term={encoded_query}&l=french&cc=fr"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                
+                if data.get('items'):
+                    for item in data['items']:
+                        if item.get('type') == 'dlc':
+                            results.append({
+                                'appid': str(item['id']),
+                                'name': item['name'],
+                                'type': 'dlc'
+                            })
+                        elif item.get('type') == 'game':
+                            appid = str(item['id'])
+                            try:
+                                dlc_url = f"https://store.steampowered.com/api/appdetails?appids={appid}&l=french"
+                                req_dlc = urllib.request.Request(dlc_url, headers={'User-Agent': 'Mozilla/5.0'})
+                                with urllib.request.urlopen(req_dlc, timeout=3) as response_dlc:
+                                    data_dlc = json.loads(response_dlc.read().decode())
+                                    if data_dlc.get(appid, {}).get('success'):
+                                        game_data = data_dlc[appid]['data']
+                                        if game_data.get('dlc'):
+                                            for dlc_id in game_data['dlc']:
+                                                results.append({
+                                                    'appid': str(dlc_id),
+                                                    'name': f"DLC {dlc_id}",
+                                                    'type': 'dlc'
+                                                })
+                            except:
+                                pass
+                else:
+                    url = f"https://store.steampowered.com/api/appdetails?appids={encoded_query}&l=french"
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=3) as response:
+                        data = json.loads(response.read().decode())
+                        for appid, app_data in data.items():
+                            if app_data.get('success'):
+                                if app_data['data'].get('type') == 'dlc':
+                                    results.append({
+                                        'appid': appid,
+                                        'name': app_data['data'].get('name', appid),
+                                        'type': 'dlc'
+                                    })
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+        
+        if not results:
+            try:
+                import urllib.parse
+                encoded_query = urllib.parse.quote(self.query)
+                search_url = f"https://store.steampowered.com/search/?term={encoded_query}&category1=21&l=french"
+                req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    html = response.read().decode('utf-8', errors='ignore')
+                    appid_pattern = r'data-ds-appid="(\d+)"'
+                    name_pattern = r'class="title"[^>]*>([^<]+)</span>'
+                    appids = re.findall(appid_pattern, html)
+                    names = re.findall(name_pattern, html)
+                    for i, appid in enumerate(appids):
+                        if i < len(names):
+                            results.append({
+                                'appid': appid,
+                                'name': names[i].strip(),
+                                'type': 'dlc'
+                            })
+            except Exception as e:
+                pass
+        
+        self.results_ready.emit(results)
+
+class DLCSearchDialog(QDialog):
+    def __init__(self, parent, config, target_folder):
+        super().__init__(parent)
+        self.parent = parent
+        self.config = config
+        self.target_folder = target_folder
+        self.search_thread = None
+        theme = self.config.get('theme', 'Gris foncé')
+        self.setStyleSheet(get_theme_stylesheet(theme))
+        self.setWindowTitle("Recherche de DLC")
+        self.setModal(True)
+        width, height = get_scaled_size(700, 600)
+        self.resize(width, height)
+        self.initUI()
+        center_window(self)
+
+    def initUI(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+        layout.setContentsMargins(15, 15, 15, 15)
+
+        search_group = QGroupBox("Recherche")
+        search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(10, 10, 10, 10)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Tapez le nom d'un jeu ou d'un DLC...")
+        self.search_input.textChanged.connect(self.on_search_text_changed)
+        search_layout.addWidget(self.search_input)
+        search_group.setLayout(search_layout)
+        layout.addWidget(search_group)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        results_group = QGroupBox("Résultats")
+        results_layout = QVBoxLayout()
+        results_layout.setContentsMargins(10, 10, 10, 10)
+        self.results_list = QListWidget()
+        self.results_list.setAlternatingRowColors(True)
+        self.results_list.itemDoubleClicked.connect(self.on_item_double_clicked)
+        theme = self.config.get('theme', 'Gris foncé')
+        theme_colors = THEMES.get(theme, THEMES["Gris foncé"])
+        self.results_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {theme_colors['bg_secondary']};
+                color: {theme_colors['text_primary']};
+                border: 1px solid {theme_colors['border']};
+                border-radius: 4px;
+                padding: 4px;
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 8px;
+                border-bottom: 1px solid {theme_colors['border']};
+                color: {theme_colors['text_primary']};
+                background-color: {theme_colors['bg_secondary']};
+            }}
+            QListWidget::item:selected {{
+                background-color: {theme_colors['accent']};
+                color: {theme_colors['text_primary']};
+            }}
+            QListWidget::item:hover {{
+                background-color: {theme_colors['accent_hover']};
+            }}
+        """)
+        results_layout.addWidget(self.results_list)
+        results_group.setLayout(results_layout)
+        layout.addWidget(results_group)
+
+        info_label = QLabel("Double-cliquez sur un DLC pour l'ajouter au fichier Steamtools.lua")
+        info_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(info_label)
+
+        self.setLayout(layout)
+
+    def on_search_text_changed(self, text):
+        if len(text) < 2:
+            self.results_list.clear()
+            self.status_label.setText("")
+            return
+        if self.search_thread and self.search_thread.isRunning():
+            self.search_thread.terminate()
+            self.search_thread.wait()
+        self.status_label.setText("Recherche en cours...")
+        self.search_thread = SteamDLCSearchThread(text)
+        self.search_thread.results_ready.connect(self.display_results)
+        self.search_thread.error_occurred.connect(self.on_search_error)
+        self.search_thread.start()
+
+    def display_results(self, results):
+        self.results_list.clear()
+        if not results:
+            self.status_label.setText("Aucun DLC trouvé. Essayez un autre terme.")
+            return
+        self.status_label.setText(f"{len(results)} DLC trouvé(s).")
+        for dlc in results:
+            display_text = f"{dlc['name']} (APPID: {dlc['appid']})"
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.UserRole, dlc)
+            self.results_list.addItem(item)
+
+    def on_search_error(self, error_msg):
+        self.status_label.setText(f"Erreur: {error_msg}")
+
+    def on_item_double_clicked(self, item):
+        dlc = item.data(Qt.UserRole)
+        if not dlc:
+            return
+
+        if not self.target_folder or not os.path.exists(self.target_folder):
+            QMessageBox.warning(self, "Erreur", 
+                "Le dossier SteamTools n'existe pas.\nVeuillez installer SteamTools d'abord.")
+            return
+
+        steamtools_file = os.path.join(self.target_folder, "Steamtools.lua")
+        appid = dlc['appid']
+
+        existing_lines = []
+        if os.path.exists(steamtools_file):
+            with open(steamtools_file, 'r', encoding='utf-8') as f:
+                existing_lines = f.read().splitlines()
+
+        line_to_add = f"addappid({appid}, 1)"
+        if line_to_add in existing_lines:
+            QMessageBox.information(self, "Déjà présent", 
+                f"Le DLC {dlc['name']} (APPID: {appid}) est déjà dans le fichier.")
+            return
+
+        try:
+            with open(steamtools_file, 'a', encoding='utf-8') as f:
+                f.write(line_to_add + "\n")
+            QMessageBox.information(self, "Succès", 
+                f"DLC ajouté avec succès !\n{line_to_add}")
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Impossible d'écrire dans le fichier: {e}")
 
 class UpdateChecker(QThread):
     update_checked = pyqtSignal(bool, str, str)
@@ -714,6 +1083,12 @@ class SearchDialog(QDialog):
         steamdb_action = QAction("Ouvrir dans SteamDB", menu)
         steamdb_action.triggered.connect(lambda: self.open_steamdb(game['appid']))
         menu.addAction(steamdb_action)
+        
+        if self.config.get('auto_add_all_dlc', False):
+            add_all_dlc_action = QAction("Ajouter tous les DLC", menu)
+            add_all_dlc_action.triggered.connect(lambda: self.add_all_dlc_for_game(game['appid']))
+            menu.addAction(add_all_dlc_action)
+        
         menu.exec_(QCursor.pos())
 
     def copy_appid(self, appid):
@@ -729,6 +1104,43 @@ class SearchDialog(QDialog):
     def open_steamdb(self, appid):
         url = QUrl(f"https://steamdb.info/app/{appid}/")
         QDesktopServices.openUrl(url)
+    
+    def add_all_dlc_for_game(self, game_appid):
+        if not hasattr(self.parent, 'target_folder') or not self.parent.target_folder:
+            QMessageBox.warning(self, "Erreur", "Le dossier SteamTools n'existe pas.")
+            return
+        
+        self.dlc_thread = GameDLCDownloadThread(game_appid, self.parent.target_folder)
+        self.progress_dialog = QProgressDialog("Récupération des DLC...", "Annuler", 0, 100, self)
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setAutoClose(True)
+        self.progress_dialog.setAutoReset(True)
+        self.progress_dialog.setMinimumWidth(350)
+        self.progress_dialog.canceled.connect(self.dlc_thread.terminate)
+        self.dlc_thread.progress.connect(self.on_dlc_progress)
+        self.dlc_thread.finished.connect(self.on_dlc_finished)
+        self.dlc_thread.error.connect(self.on_dlc_error)
+        self.dlc_thread.start()
+    
+    def on_dlc_progress(self, value, message):
+        self.progress_dialog.setValue(value)
+        self.progress_dialog.setLabelText(message)
+    
+    def on_dlc_finished(self, added_dlcs, skipped_dlcs, failed_dlcs):
+        self.progress_dialog.close()
+        if added_dlcs:
+            msg = f"{len(added_dlcs)} DLC ajoutés avec succès.\n"
+            if skipped_dlcs:
+                msg += f"{len(skipped_dlcs)} DLC déjà présents.\n"
+            if failed_dlcs:
+                msg += f"{len(failed_dlcs)} DLC ont échoué."
+            QMessageBox.information(self, "Succès", msg)
+        else:
+            QMessageBox.information(self, "Info", "Aucun DLC trouvé pour ce jeu.")
+    
+    def on_dlc_error(self, error_msg):
+        self.progress_dialog.close()
+        QMessageBox.critical(self, "Erreur", f"Erreur lors de la récupération des DLC:\n{error_msg}")
 
 class NameFetcher(QThread):
     names_ready = pyqtSignal(dict)
@@ -955,6 +1367,11 @@ class GameGridMenu(QMenu):
             steamdb_action.triggered.connect(lambda: parent_window.open_steamdb(appid))
             menu.addAction(steamdb_action)
             
+            if parent_window.config.get('auto_add_all_dlc', False):
+                add_dlc_action = QAction("Ajouter tous les DLC", menu)
+                add_dlc_action.triggered.connect(lambda: parent_window.add_all_dlc_for_game(appid))
+                menu.addAction(add_dlc_action)
+            
             menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
         
         btn.clicked.connect(show_game_menu)
@@ -993,6 +1410,7 @@ class SettingsDialog(QDialog):
         self.update_checker = None
         self.update_downloader = None
         self.latest_version = None
+        self.game_names = known_names.copy()
         
         width = self.config.get('dialog_width', 600)
         height = self.config.get('dialog_height', 600)
@@ -1113,6 +1531,20 @@ class SettingsDialog(QDialog):
         
         logo_group.setLayout(logo_layout)
         general_layout.addWidget(logo_group)
+
+        dlc_group = QGroupBox("Options DLC")
+        dlc_layout = QVBoxLayout()
+        dlc_layout.setContentsMargins(10, 10, 10, 10)
+        self.auto_add_all_dlc_check = QCheckBox("Ajouter automatiquement tous les DLC d'un jeu quand on l'ajoute")
+        self.auto_add_all_dlc_check.setChecked(self.config.get('auto_add_all_dlc', False))
+        dlc_layout.addWidget(self.auto_add_all_dlc_check)
+        
+        add_dlc_manually_btn = QPushButton("Ajouter tous les DLC des jeux existants")
+        add_dlc_manually_btn.clicked.connect(self.add_dlc_for_existing_games)
+        dlc_layout.addWidget(add_dlc_manually_btn)
+        
+        dlc_group.setLayout(dlc_layout)
+        general_layout.addWidget(dlc_group)
 
         discord_group = QGroupBox("Présence Discord")
         discord_layout = QVBoxLayout()
@@ -1380,6 +1812,159 @@ class SettingsDialog(QDialog):
         if self.config.get('auto_check_updates', True):
             QTimer.singleShot(500, self.check_for_updates)
 
+    def add_dlc_for_existing_games(self):
+        if not hasattr(self.parent, 'target_folder') or not self.parent.target_folder:
+            QMessageBox.warning(self, "Erreur", "Le dossier SteamTools n'existe pas.")
+            return
+        
+        if not os.path.exists(self.parent.target_folder):
+            QMessageBox.warning(self, "Erreur", "Le dossier SteamTools n'existe pas.")
+            return
+        
+        try:
+            files = [f for f in os.listdir(self.parent.target_folder) 
+                    if f.lower().endswith('.lua') and f.lower() != 'steamtools.lua']
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Impossible de lister les fichiers: {e}")
+            return
+        
+        if not files:
+            QMessageBox.information(self, "Info", "Aucun fichier .lua trouvé.")
+            return
+        
+        appids = [os.path.splitext(f)[0] for f in files]
+        
+        self.analysis_progress = QProgressDialog("", "Annuler", 0, len(appids), self)
+        self.analysis_progress.setWindowTitle("Analyse des jeux")
+        self.analysis_progress.setWindowModality(Qt.WindowModal)
+        self.analysis_progress.setMinimumWidth(450)
+        self.analysis_progress.setMinimumDuration(0)
+        self.analysis_progress.setValue(0)
+        
+        steamtools_file = os.path.join(self.parent.target_folder, "Steamtools.lua")
+        existing_dlcs = []
+        if os.path.exists(steamtools_file):
+            self.analysis_progress.setLabelText("Lecture des DLC existants...")
+            QApplication.processEvents()
+            with open(steamtools_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    match = re.search(r'addappid\((\d+),', line)
+                    if match:
+                        existing_dlcs.append(match.group(1))
+        
+        games_with_dlc_status = {}
+        total_appids = len(appids)
+        
+        for i, appid in enumerate(appids):
+            if self.analysis_progress.wasCanceled():
+                self.analysis_progress.close()
+                return
+            
+            percent = int((i + 1) * 100 / total_appids)
+            self.analysis_progress.setValue(i + 1)
+            self.analysis_progress.setLabelText(f"[{percent}%] Analyse du jeu...")
+            QApplication.processEvents()
+            
+            try:
+                url = f"https://store.steampowered.com/api/appdetails?appids={appid}"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    data = json.loads(response.read().decode())
+                    if data.get(appid, {}).get('success'):
+                        game_data = data[appid]['data']
+                        game_name = game_data.get('name', appid)
+                        self.game_names[appid] = game_name
+                        
+                        if game_data.get('dlc'):
+                            game_dlcs = [str(dlc_id) for dlc_id in game_data['dlc']]
+                            missing_dlcs = [dlc for dlc in game_dlcs if dlc not in existing_dlcs]
+                            has_all_dlc = len(missing_dlcs) == 0
+                            
+                            if not has_all_dlc:
+                                games_with_dlc_status[appid] = (game_name, len(missing_dlcs))
+                                self.analysis_progress.setLabelText(f"[{percent}%] {game_name} : {len(missing_dlcs)} DLC manquants")
+                            else:
+                                self.analysis_progress.setLabelText(f"[{percent}%] {game_name} : tous les DLC déjà présents")
+                        else:
+                            self.analysis_progress.setLabelText(f"[{percent}%] {game_name} : aucun DLC disponible")
+                    QApplication.processEvents()
+            except Exception as e:
+                self.analysis_progress.setLabelText(f"[{percent}%] Erreur analyse")
+                QApplication.processEvents()
+        
+        self.analysis_progress.close()
+        
+        games_with_dlc_status = {k: v for k, v in sorted(games_with_dlc_status.items(), key=lambda x: x[1][0])}
+        
+        if not games_with_dlc_status:
+            QMessageBox.information(self, "Info", "Tous les jeux ont déjà tous leurs DLC.")
+            return
+        
+        dialog = SelectGameForDLCDialog(self, self.config, self.parent.target_folder, games_with_dlc_status, self.game_names)
+        if dialog.exec_() == QDialog.Accepted:
+            selected_games = dialog.selected_games
+            if selected_games:
+                self.process_dlc_for_games(selected_games)
+    
+    def process_dlc_for_games(self, game_appids):
+        self.current_thread_index = 0
+        self.total_added = 0
+        self.total_skipped = 0
+        self.total_failed = 0
+        self.game_dlc_threads = []
+        
+        self.process_progress = QProgressDialog("", "Annuler", 0, len(game_appids), self)
+        self.process_progress.setWindowTitle("Ajout des DLC")
+        self.process_progress.setWindowModality(Qt.WindowModal)
+        self.process_progress.setMinimumWidth(450)
+        self.process_progress.setMinimumDuration(0)
+        self.process_progress.canceled.connect(self.cancel_dlc_processing)
+        
+        self.process_dlc_next_game(game_appids)
+    
+    def process_dlc_next_game(self, game_appids):
+        if self.current_thread_index >= len(game_appids):
+            self.process_progress.close()
+            msg = f"Terminé !\n\n"
+            msg += f"DLC ajoutés : {self.total_added}\n"
+            if self.total_skipped > 0:
+                msg += f"DLC déjà présents : {self.total_skipped}\n"
+            if self.total_failed > 0:
+                msg += f"DLC en échec : {self.total_failed}"
+            QMessageBox.information(self, "Succès", msg)
+            return
+        
+        appid = game_appids[self.current_thread_index]
+        game_name = self.game_names.get(appid, appid)
+        progress_percent = int((self.current_thread_index + 1) * 100 / len(game_appids))
+        self.process_progress.setLabelText(f"[{progress_percent}%] Ajout des DLC pour {game_name}...")
+        self.process_progress.setValue(self.current_thread_index + 1)
+        QApplication.processEvents()
+        
+        thread = GameDLCDownloadThread(appid, self.parent.target_folder)
+        thread.finished.connect(lambda added, skipped, failed: self.on_game_dlc_finished(added, skipped, failed, game_appids))
+        thread.error.connect(lambda err: self.on_game_dlc_error(err, game_appids))
+        self.game_dlc_threads.append(thread)
+        thread.start()
+    
+    def on_game_dlc_finished(self, added_dlcs, skipped_dlcs, failed_dlcs, game_appids):
+        self.total_added += len(added_dlcs)
+        self.total_skipped += len(skipped_dlcs)
+        self.total_failed += len(failed_dlcs)
+        self.current_thread_index += 1
+        self.process_dlc_next_game(game_appids)
+    
+    def on_game_dlc_error(self, error_msg, game_appids):
+        self.current_thread_index += 1
+        self.process_dlc_next_game(game_appids)
+    
+    def cancel_dlc_processing(self):
+        for thread in self.game_dlc_threads:
+            if thread.isRunning():
+                thread.terminate()
+        self.process_progress.close()
+        QMessageBox.information(self, "Annulé", "L'ajout des DLC a été annulé.")
+
     def check_for_updates(self):
         self.update_status_label.setText("Vérification en cours...")
         self.download_btn.setEnabled(False)
@@ -1538,6 +2123,7 @@ class SettingsDialog(QDialog):
         self.config['start_with_windows'] = self.startup_check.isChecked()
         self.config['auto_launch_steam'] = self.auto_steam_check.isChecked()
         self.config['auto_check_updates'] = self.auto_update_check.isChecked()
+        self.config['auto_add_all_dlc'] = self.auto_add_all_dlc_check.isChecked()
         self.config['font_family'] = self.font_family_combo.currentText()
         self.config['font_size'] = self.font_size_slider.value()
         self.config['theme'] = self.theme_combo.currentText()
@@ -1857,6 +2443,9 @@ class FurryTools(QWidget):
         search_action = self.context_menu.addAction("Rechercher un jeu Steam")
         search_action.triggered.connect(self.open_search_dialog)
         
+        dlc_search_action = self.context_menu.addAction("Rechercher des DLC")
+        dlc_search_action.triggered.connect(self.open_dlc_search_dialog)
+        
         discord_action = self.context_menu.addAction("Project Lightning")
         discord_action.triggered.connect(self.open_discord)
         
@@ -1879,12 +2468,56 @@ class FurryTools(QWidget):
         dialog = SearchDialog(self, self.config)
         dialog.exec_()
 
+    def open_dlc_search_dialog(self):
+        if not self.target_folder:
+            QMessageBox.warning(self, "Erreur", "Le dossier Steam n'a pas été trouvé.\nVeuillez d'abord installer Steam.")
+            return
+        dialog = DLCSearchDialog(self, self.config, self.target_folder)
+        dialog.exec_()
+
     def populate_profile_menu(self):
         self.profile_menu.clear()
         create_action = self.profile_menu.addAction("Créer un profile")
         create_action.triggered.connect(self.create_profile)
         import_action = self.profile_menu.addAction("Importer un profile")
         import_action.triggered.connect(self.import_profile)
+
+    def add_all_dlc_for_game(self, game_appid):
+        if not self.target_folder:
+            QMessageBox.warning(self, "Erreur", "Le dossier SteamTools n'existe pas.")
+            return
+        
+        self.dlc_thread = GameDLCDownloadThread(game_appid, self.target_folder)
+        self.progress_dialog = QProgressDialog("Récupération des DLC...", "Annuler", 0, 100, self)
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setAutoClose(True)
+        self.progress_dialog.setAutoReset(True)
+        self.progress_dialog.setMinimumWidth(350)
+        self.progress_dialog.canceled.connect(self.dlc_thread.terminate)
+        self.dlc_thread.progress.connect(self.on_dlc_progress)
+        self.dlc_thread.finished.connect(self.on_dlc_finished)
+        self.dlc_thread.error.connect(self.on_dlc_error)
+        self.dlc_thread.start()
+    
+    def on_dlc_progress(self, value, message):
+        self.progress_dialog.setValue(value)
+        self.progress_dialog.setLabelText(message)
+    
+    def on_dlc_finished(self, added_dlcs, skipped_dlcs, failed_dlcs):
+        self.progress_dialog.close()
+        if added_dlcs:
+            msg = f"{len(added_dlcs)} DLC ajoutés avec succès.\n"
+            if skipped_dlcs:
+                msg += f"{len(skipped_dlcs)} DLC déjà présents.\n"
+            if failed_dlcs:
+                msg += f"{len(failed_dlcs)} DLC ont échoué."
+            QMessageBox.information(self, "Succès", msg)
+        else:
+            QMessageBox.information(self, "Info", "Aucun DLC trouvé pour ce jeu.")
+    
+    def on_dlc_error(self, error_msg):
+        self.progress_dialog.close()
+        QMessageBox.critical(self, "Erreur", f"Erreur lors de la récupération des DLC:\n{error_msg}")
 
     def load_logo(self):
         if self.movie is not None:
